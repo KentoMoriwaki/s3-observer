@@ -11,6 +11,11 @@ class S3ObserverServiceProvider extends ServiceProvider {
 	 */
 	protected $defer = false;
 
+    public function boot()
+    {
+        $this->package('translucent/s3-observer');
+    }
+
 	/**
 	 * Register the service provider.
 	 *
@@ -18,7 +23,19 @@ class S3ObserverServiceProvider extends ServiceProvider {
 	 */
 	public function register()
 	{
-		//
+
+        $this->app->bindShared('s3-observer.dispatcher', function($app)
+        {
+            $aws = $app['aws'];
+            return new Dispatcher($aws->get('s3'));
+        });
+
+		$this->app->bindShared('s3-observer.factory', function($app)
+        {
+            Observer::boot($app['s3-observer.dispatcher']);
+            return new ObserverFactory();
+        });
+
 	}
 
 	/**
@@ -28,7 +45,7 @@ class S3ObserverServiceProvider extends ServiceProvider {
 	 */
 	public function provides()
 	{
-		return array();
+		return array('s3-observer.factory');
 	}
 
 }
