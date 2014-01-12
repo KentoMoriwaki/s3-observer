@@ -61,11 +61,25 @@ class Handler
 
     /**
      * Callback method
-     * @param $model
+     * @param $model Model
      */
     public function deleting($model)
     {
-
+        $objects = [];
+        foreach ($this->settings['fields'] as $field) {
+            $url = $model->getAttribute($field);
+            if ($url) {
+                $objects[] = [
+                    'Key' => $this->getKeyFromUrl($url)
+                ];
+            }
+        }
+        if (!empty($objects)) {
+            $this->client->deleteObjects([
+                'Bucket' => $this->settings['bucket'],
+                'Objects' => $objects,
+            ]);
+        }
     }
 
 
@@ -113,6 +127,20 @@ class Handler
     public function getAlternativeName($model)
     {
         return str_random(20);
+    }
+
+
+    /**
+     * @param $url String
+     * @return String
+     */
+    public function getKeyFromUrl($url)
+    {
+        $key = parse_url($url, PHP_URL_PATH);
+        if (starts_with($key, '/')) {
+            return substr($key, 1);
+        }
+        return $key;
     }
 
 }
