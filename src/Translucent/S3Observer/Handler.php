@@ -40,19 +40,29 @@ class Handler
     {
         foreach ($this->settings['fields'] as $field) {
             $file = $model->getAttribute($field);
-            if ($file instanceof UploadedFile) {
+
+            if (is_string($file) && $this->checkTempName($file)) {
+                // When url is temp name, move to name with primary key.
+                $fromKey = $this->keyFromUrl($file);
+                $newKey = $this->replaceBasename($fromKey, $model->getKey());
+                $newUrl = $this->moveObject($file, $newKey);
+                $model->setAttribute($field, $newUrl);
+
+            } else if ($file instanceof UploadedFile) {
                 // Upload file
                 $key = $this->getTargetKey($model, $field);
-                $acl = $this->settings['acl'];
-                if (is_null($acl)) {
-                    $acl = $this->settings['public'] ? 'public-read' : 'private';
+                // Get original url
+                $original = $model->getOriginal($field);
+                if ($original && $original != $key) {
+                    $this->deleteObjects([$original]);
                 }
                 $resource = $this->client->putObject([
                     'Key' => $key,
                     'SourceFile' => $file->getRealPath(),
-                    'ACL' => $acl,
+                    'ACL' => $this->getAcl(),
                     'ContentType' => $file->getMimeType(),
                     'Bucket' => $this->settings['bucket'],
+                    ''
                 ]);
                 $model->setAttribute($field, $resource['ObjectURL']);
             }
@@ -65,23 +75,60 @@ class Handler
      */
     public function deleting($model)
     {
-        $objects = [];
+        $urls = [];
         foreach ($this->settings['fields'] as $field) {
             $url = $model->getAttribute($field);
             if ($url) {
-                $objects[] = [
-                    'Key' => $this->getKeyFromUrl($url)
-                ];
+                $urls[] = $url;
             }
         }
-        if (!empty($objects)) {
-            $this->client->deleteObjects([
-                'Bucket' => $this->settings['bucket'],
-                'Objects' => $objects,
-            ]);
+        if (!empty($urls)) {
+            $this->deleteObjects($urls);
         }
     }
 
+    /**
+     * Delete objects from S3
+     * @param $urls
+     */
+    protected function deleteObjects($urls)
+    {
+        $objects = array_map(function($url)
+        {
+            return ['Key' => $this->keyFromUrl($url)];
+        }, $urls);
+
+        $this->client->deleteObjects([
+            'Bucket' => $this->settings['bucket'],
+            'Objects' => $objects,
+        ]);
+    }
+
+    /**
+     * Move object on S3
+     * @param $fromKey
+     * @param $toKey
+     * @return String new url
+     */
+    protected function moveObject($fromKey, $toKey)
+    {
+        $bucket = $this->settings['bucket'];
+        $object = [
+            'Bucket' => $bucket,
+            'Key' => $toKey,
+            'CopySource' => $fromKey,
+            'ACL' => $this->getAcl(),
+        ];
+        $this->client->copyObject($object);
+        $url = $this->client->getObjectUrl($bucket, $toKey);
+        $this->deleteObjects([$fromKey]);
+        return $url;
+    }
+
+    public function putObject()
+    {
+
+    }
 
     /**
      * @param $model Model
@@ -96,8 +143,13 @@ class Handler
         if ($primaryKey) {
             return $dir . $primaryKey . '.' . $ext;
         }
-        $alternativeKey = $this->getAlternativeName($model);
-        return $dir . $alternativeKey . '.' . $ext;
+        // Get unique key for model without key
+        $bucket = $this->settings['bucket'];
+        $key = $dir . $this->getTempName($model) . '.' . $ext;
+        while ($this->client->doesObjectExist($bucket, $key)) {
+            $key = $dir . $this->getTempName($model) . '.' . $ext;
+        }
+        return $key;
     }
 
     public function getTargetDir($field)
@@ -121,26 +173,57 @@ class Handler
     }
 
     /**
+     * Get url if a model has no key.
      * @param $model Model
-     * @return String random naem
+     * @return String random name
      */
-    public function getAlternativeName($model)
+    public function getTempName($model)
     {
-        return str_random(20);
+        return 'tmp_' . str_random(20);
     }
 
+    /**
+     * Check if a url is temp name.
+     * @param $url
+     * @return bool
+     */
+    public function checkTempName($url)
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        $slugs = explode('/', $path);
+        return starts_with(array_pop($slugs), 'tmp_');
+    }
 
     /**
      * @param $url String
      * @return String
      */
-    public function getKeyFromUrl($url)
+    public function keyFromUrl($url)
     {
         $key = parse_url($url, PHP_URL_PATH);
+        if ($key === false) {
+            return $url;
+        }
         if (starts_with($key, '/')) {
             return substr($key, 1);
         }
         return $key;
+    }
+
+    public function replaceBasename($target, $replace)
+    {
+        $dir = dirname($target);
+        $basename = basename($target);
+        return $dir . '/' . preg_replace('/^[^\.]*/', $replace, $basename);
+    }
+
+    public function getAcl()
+    {
+        $acl = $this->settings['acl'];
+        if (is_null($acl)) {
+            return $this->settings['public'] ? 'public-read' : 'private';
+        }
+        return $acl;
     }
 
 }
