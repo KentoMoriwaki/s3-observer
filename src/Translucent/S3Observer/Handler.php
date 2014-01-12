@@ -65,6 +65,12 @@ class Handler
                     ''
                 ]);
                 $model->setAttribute($field, $resource['ObjectURL']);
+
+            } else if ($file === false) {
+                // Delete file
+                $original = $model->getOriginal($field);
+                $this->deleteObjects([$original]);
+                $model->setAttribute($field, null);
             }
         }
     }
