@@ -232,11 +232,6 @@ class Handler
     }
 
     /**
-     * Get formal name
-     */
-
-
-    /**
      * Get url if a model has no key.
      * @param Model $model
      * @return string random name
@@ -331,11 +326,11 @@ class Handler
      */
     protected function fieldSettings($field, $key = null)
     {
-        $fieldSettings = [];
-        if (isset($this->settings['fields'][$field]) && is_array($this->settings['fields'][$field])) {
-            $fieldSettings = $this->settings['fields'][$field];
+        $fieldSettings = $this->config('fields.' . $field);
+        if (empty($fieldSettings)) {
+            $fieldSettings = [];
         }
-        $modelSettings = array_except($this->settings, ['fields']);
+        $modelSettings = array_except($this->config(), ['fields']);
         $settings = array_merge(static::$globalConfig, $modelSettings, $fieldSettings);
         if ($key) {
             return array_get($settings, $key);

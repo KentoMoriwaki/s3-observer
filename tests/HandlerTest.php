@@ -13,6 +13,15 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         parent::tearDown();
     }
 
+    public function testProcessFieldMethodIsCalledOnProperTimes()
+    {
+        list($client, $model) = $this->getMocks();
+        $handler = $this->getMock($this->name, ['processField'], ['User', $client]);
+        $handler->expects($this->exactly(2))->method('processField');
+        $handler->setFields('profile', 'cover_image');
+        $handler->saving($model);
+    }
+
     public function testGetTargetDir()
     {
         list($client) = $this->getMocks();
@@ -31,10 +40,9 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
             $handler->getTargetDir('coverImage'));
 
         $handler = new Handler('User', $client);
-        $handler->settings['base'] = 'hello';
         $this->assertEquals(
             '/hello/user/profile/',
-            $handler->getTargetDir('profile'));
+            $handler->getTargetDir('profile', 'hello'));
     }
 
     public function testGetS3KeyFromObjectURL()
@@ -61,7 +69,6 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
                 return $args['Objects'] == [['Key' => 'foo'], ['Key' => 'bar']];
             }));
         $handler = m::mock($this->name . '[keyFromUrl]', ['User', $client]);
-        $handler->settings['bucket'] = 'translucent';
         $handler->shouldReceive('keyFromUrl')->twice()
             ->andReturn('foo', 'bar');
 
@@ -69,7 +76,7 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         $ref = new \ReflectionClass($handler);
         $method = $ref->getMethod('deleteObjects');
         $method->setAccessible(true);
-        $method->invoke($handler, ['foo_url', 'bar_url']);
+        $method->invoke($handler, ['foo_url', 'bar_url'], 'translucent');
     }
 
     public function testDeleting()
@@ -78,7 +85,7 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         $model->shouldReceive('getAttribute')->twice()->andReturn('foo', 'bar');
 
         $handler = $this->getMock($this->name, ['deleteObjects'], ['User', $client]);
-        $handler->settings['fields'] = ['foo_field', 'bar_field'];
+        $handler->setFields('foo_field', 'bar_field');
         $handler->expects($this->once())->method('deleteObjects')->with(['foo', 'bar']);
         $handler->deleting($model);
     }
@@ -89,15 +96,15 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         $class = $this->name;
         $handler = new $class('User', $client);
 
-        $handler->settings['public'] = true;
-        $this->assertEquals('public-read', $handler->getAcl());
+        $settings = ['public' => true, 'acl' => null];
+        $this->assertEquals('public-read', $handler->getAcl($settings));
 
-        $handler->settings['public'] = false;
-        $this->assertEquals('private', $handler->getAcl());
+        $settings['public'] = false;
+        $this->assertEquals('private', $handler->getAcl($settings));
 
-        $handler->settings['acl'] = 'public-read-write';
-        $handler->settings['public'] = true;
-        $this->assertEquals('public-read-write', $handler->getAcl());
+        $settings['acl'] = 'public-read-write';
+        $settings['public'] = true;
+        $this->assertEquals('public-read-write', $handler->getAcl($settings));
     }
 
     public function testRenameToFormal()
@@ -128,6 +135,23 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         $this->assertTrue($handler->checkTempFile('user/profile/tmp_abcdef.jpg'));
         $this->assertFalse($handler->checkTempFile('user/profile/1.jpg'));
         $this->assertFalse($handler->checkTempFile(null));
+    }
+
+    public function testCascadingConfig()
+    {
+        list($client) = $this->getMocks();
+        $class = $this->name;
+        $handler = new $class('User', $client);
+
+        $ref = new \ReflectionClass($handler);
+        $method = $ref->getMethod('fieldSettings');
+        $method->setAccessible(true);
+
+        $handler->config('bucket', 'global_bucket');
+        $handler->config('fields.profile.bucket', 'profile_bucket');
+        $handler->config('fields.cover_image.bucket', null);
+        $this->assertEquals('profile_bucket', $method->invoke($handler, 'profile', 'bucket'));
+        $this->assertEquals('global_bucket', $method->invoke($handler, 'cover_image', 'bucket'));
     }
 
     protected function getMocks()
