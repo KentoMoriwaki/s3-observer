@@ -58,17 +58,21 @@ class Observer {
         return get_class($model);
     }
 
-    public function __set($key, $value)
+    /**
+     * @param string $field
+     * @param string $field,...
+     */
+    public function setFields($field)
     {
         if ($this->handler) {
-            $this->handler->settings[$key] = $value;
+            call_user_func_array([$this->handler, 'setFields'], func_get_args());
         }
     }
 
-    public function __get($key)
+    public function config($key = null, $val = null)
     {
         if ($this->handler) {
-            return $this->handler->settings[$key];
+            return $this->handler->config($key, $val);
         }
     }
 

@@ -8,9 +8,10 @@ class Dispatcher
     protected $handlers = [];
     protected $client;
 
-    public function __construct(S3Client $client)
+    public function __construct(S3Client $client, $config)
     {
         $this->client = $client;
+        Handler::setGlobalConfig($config);
     }
 
     public function register($modelName)

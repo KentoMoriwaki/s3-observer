@@ -8,44 +8,39 @@ use Symfony\Component\HttpFoundation\File\UploadedFile;
 class Handler
 {
 
-    public $settings = [];
+    protected $settings = ['fields' => []];
 
-    protected $defaults = [
-        'fields' => [],
-        'public' => true,
-        'acl' => null,
-        'base' => null,
-        'bucket' => '',
-    ];
+    protected $fields = [];
 
     protected $modelName;
+
+    protected static $globalConfig = [];
 
     /**
      * @var Client
      */
     protected $client;
 
-    public function __construct($modelName, $client, $config = [])
+    public function __construct($modelName, $client)
     {
         $this->modelName = $modelName;
         $this->client = $client;
-        $this->settings = array_merge($this->defaults, $config);
     }
 
     /**
      * Callback method
-     * @param $model Model
+     * @param Model $model
      */
     public function saving($model)
     {
-        foreach ($this->settings['fields'] as $field) {
+        foreach ($this->fields as $field) {
             $this->processField($model, $field);
         }
     }
 
     /**
-     * @param $model Model
-     * @param $field String
+     * @param Model $model
+     * @param string $field
      * @return bool
      */
     protected function processField($model, $field)
@@ -59,7 +54,7 @@ class Handler
 
         if ($file === false) {
             // Delete file
-            $this->deleteObject($original);
+            $this->deleteObject($original, $this->fieldSettings($field, 'bucket'));
             $model->setAttribute($field, null);
 
         } else if ($this->checkTempFile($file)) {
@@ -69,7 +64,7 @@ class Handler
 
         } else {
             // Update field
-            $url = $this->updateField($model, $field);
+            $url = $this->upload($model, $field);
             $model->setAttribute($field, $url);
         }
 
@@ -77,132 +72,150 @@ class Handler
     }
 
     /**
-     * @param $model Model
-     * @param $field string
+     * @param Model $model
+     * @param string $field
      * @return string
      */
-    protected function updateField($model, $field)
+    protected function upload($model, $field)
     {
         $file = $model->getAttribute($field);
         if (!($file instanceof UploadedFile)) {
             return $file;
         }
-        $key = $this->getTargetKey($model, $field);
+        $settings = $this->fieldSettings($field);
+        $key = $this->getTargetKey($model, $field, $settings);
         $original = $model->getOriginal($field);
         if ($original && $original != $key) {
-            $this->deleteObject($original);
+            $this->deleteObject($original, $settings['bucket']);
         }
         $resource = $this->client->putObject([
             'Key' => $key,
             'SourceFile' => $file->getRealPath(),
-            'ACL' => $this->getAcl(),
+            'ACL' => $this->getAcl($settings),
             'ContentType' => $file->getMimeType(),
-            'Bucket' => $this->settings['bucket'],
+            'Bucket' => $settings['bucket'],
         ]);
         return $resource['ObjectURL'];
     }
 
     /**
-     * @param $model Model
-     * @param $field string
+     * @param Model $model
+     * @param string $field
      * @return string
      */
     protected function tempToFormal($model, $field)
     {
         $file = $model->getAttribute($field);
+        $settings = $this->fieldSettings($field);
         $tempKey = $this->keyFromUrl($file);
         $formalKey = $this->renameToFormal($tempKey, $model->getKey());
-        return $this->moveObject($file, $formalKey);
+        return $this->moveObject($file, $formalKey, $settings);
     }
 
     /**
      * Callback method
-     * @param $model Model
+     * @param Model $model
      */
     public function deleting($model)
     {
-        $urls = [];
-        foreach ($this->settings['fields'] as $field) {
+        $objects = [];
+        foreach ($this->fields as $field) {
+            $bucket = $this->fieldSettings($field, 'bucket');
             $url = $model->getAttribute($field);
             if ($url) {
-                $urls[] = $url;
+                if (isset($objects[$bucket])) {
+                    $objects[$bucket][] = $url;
+                } else {
+                    $objects[$bucket] = [$url];
+                }
             }
         }
-        if (!empty($urls)) {
-            $this->deleteObjects($urls);
+        foreach ($objects as $bucket => $urls) {
+            $this->deleteObjects($urls, $bucket);
         }
     }
 
-    protected function deleteObject($url)
+    /**
+     * Delete object from S3
+     * @param string $url
+     * @param string $bucket
+     */
+    protected function deleteObject($url, $bucket)
     {
-        $this->deleteObjects([$url]);
+        $this->deleteObjects([$url], $bucket);
     }
 
     /**
      * Delete objects from S3
-     * @param $urls
+     * @param array $urls
+     * @param string $bucket
      */
-    protected function deleteObjects($urls)
+    protected function deleteObjects($urls, $bucket)
     {
         $objects = array_map(function($url)
         {
             return ['Key' => $this->keyFromUrl($url)];
         }, $urls);
-
         $this->client->deleteObjects([
-            'Bucket' => $this->settings['bucket'],
+            'Bucket' => $bucket,
             'Objects' => $objects,
         ]);
     }
 
     /**
      * Move object on S3
-     * @param $source string url of s3 object
-     * @param $key string target key
-     * @return String new url
+     * @param string $source url of s3 object
+     * @param string $key target key
+     * @param array $settings
+     * @return string new url
      */
-    protected function moveObject($source, $key)
+    protected function moveObject($source, $key, $settings)
     {
-        $bucket = $this->settings['bucket'];
+        $bucket = $settings['bucket'];
         $object = [
             'Bucket' => $bucket,
             'Key' => $key,
             'CopySource' => $source,
-            'ACL' => $this->getAcl(),
+            'ACL' => $this->getAcl($settings),
         ];
         $this->client->copyObject($object);
         $url = $this->client->getObjectUrl($bucket, $key);
-        $this->deleteObjects($source);
+        $this->deleteObject($source, $settings['bucket']);
         return $url;
     }
 
     /**
-     * @param $model Model
-     * @param $field String
-     * @return String key for S3
+     * @param Model $model
+     * @param string $field
+     * @param array $settings
+     * @return string key for S3
      */
-    public function getTargetKey($model, $field)
+    public function getTargetKey($model, $field, $settings)
     {
-        $dir = $this->getTargetDir($field);
+        $dir = $this->getTargetDir($field, $settings['base']);
         $ext = $this->getTargetExtension($model->getAttribute($field));
         $primaryKey = $model->getKey();
         if ($primaryKey) {
             return $dir . $primaryKey . '.' . $ext;
         }
         // Get unique key for model without key
-        $bucket = $this->settings['bucket'];
         $key = $dir . $this->getTempName($model) . '.' . $ext;
-        while ($this->client->doesObjectExist($bucket, $key)) {
+        while ($this->client->doesObjectExist($settings['bucket'], $key)) {
             $key = $dir . $this->getTempName($model) . '.' . $ext;
         }
         return $key;
     }
 
-    public function getTargetDir($field)
+    /**
+     * @param $field
+     * @param string $base
+     * @return mixed|string
+     */
+    public function getTargetDir($field, $base = '')
     {
         $snakedModelName = snake_case($this->modelName);
         $dir = preg_replace('/(\/\_)|(\\\_)/', '/', $snakedModelName);
-        $dir = str_finish($this->settings['base'], '/') . str_finish($dir, '/') . snake_case($field) . '/';
+        $dir = str_finish($base, '/') . str_finish($dir, '/') . snake_case($field) . '/';
         if (!starts_with($dir, '/')) {
             $dir = '/' . $dir;
         }
@@ -210,8 +223,8 @@ class Handler
     }
 
     /**
-     * @param $file UploadedFile
-     * @return String
+     * @param UploadedFile $file
+     * @return string
      */
     public function getTargetExtension($file)
     {
@@ -225,8 +238,8 @@ class Handler
 
     /**
      * Get url if a model has no key.
-     * @param $model Model
-     * @return String random name
+     * @param Model $model
+     * @return string random name
      */
     public function getTempName($model = null)
     {
@@ -235,7 +248,7 @@ class Handler
 
     /**
      * Check if a file is temporary file.
-     * @param $file
+     * @param mixed $file
      * @return bool
      */
     public function checkTempFile($file)
@@ -249,8 +262,8 @@ class Handler
     }
 
     /**
-     * @param $url String
-     * @return String
+     * @param string $url
+     * @return string
      */
     public function keyFromUrl($url)
     {
@@ -265,8 +278,8 @@ class Handler
     }
 
     /**
-     * @param $target string
-     * @param $primaryKey integer|string
+     * @param string $target
+     * @param integer|string $primaryKey
      * @return string
      */
     public function renameToFormal($target, $primaryKey)
@@ -276,13 +289,58 @@ class Handler
         return $dir . '/' . preg_replace('/^[^\.]*/', $primaryKey, $basename);
     }
 
-    public function getAcl()
+    /**
+     * @param array $settings
+     * @return string
+     */
+    public function getAcl($settings)
     {
-        $acl = $this->settings['acl'];
+        $acl = $settings['acl'];
         if (is_null($acl)) {
-            return $this->settings['public'] ? 'public-read' : 'private';
+            return $settings['public'] ? 'public-read' : 'private';
         }
         return $acl;
+    }
+
+    public static function setGlobalConfig($config)
+    {
+        static::$globalConfig = $config;
+    }
+
+    public function setFields($field)
+    {
+        $fields = func_get_args();
+        $this->fields += $fields;
+    }
+
+    public function config($key = null, $val = null)
+    {
+        if (!$key) {
+            return $this->settings;
+        }
+        if (!$val) {
+            return array_get($this->settings, $key);
+        }
+        array_set($this->settings, $key, $val);
+    }
+
+    /**
+     * @param string $field
+     * @param null $key
+     * @return array|mixed
+     */
+    protected function fieldSettings($field, $key = null)
+    {
+        $fieldSettings = [];
+        if (isset($this->settings['fields'][$field]) && is_array($this->settings['fields'][$field])) {
+            $fieldSettings = $this->settings['fields'][$field];
+        }
+        $modelSettings = array_except($this->settings, ['fields']);
+        $settings = array_merge(static::$globalConfig, $modelSettings, $fieldSettings);
+        if ($key) {
+            return array_get($settings, $key);
+        }
+        return $settings;
     }
 
 }
