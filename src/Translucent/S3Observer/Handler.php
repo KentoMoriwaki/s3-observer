@@ -39,40 +39,80 @@ class Handler
     public function saving($model)
     {
         foreach ($this->settings['fields'] as $field) {
-            $file = $model->getAttribute($field);
-
-            if (is_string($file) && $this->checkTempName($file)) {
-                // When url is temp name, move to name with primary key.
-                $fromKey = $this->keyFromUrl($file);
-                $newKey = $this->replaceBasename($fromKey, $model->getKey());
-                $newUrl = $this->moveObject($file, $newKey);
-                $model->setAttribute($field, $newUrl);
-
-            } else if ($file instanceof UploadedFile) {
-                // Upload file
-                $key = $this->getTargetKey($model, $field);
-                // Get original url
-                $original = $model->getOriginal($field);
-                if ($original && $original != $key) {
-                    $this->deleteObjects([$original]);
-                }
-                $resource = $this->client->putObject([
-                    'Key' => $key,
-                    'SourceFile' => $file->getRealPath(),
-                    'ACL' => $this->getAcl(),
-                    'ContentType' => $file->getMimeType(),
-                    'Bucket' => $this->settings['bucket'],
-                    ''
-                ]);
-                $model->setAttribute($field, $resource['ObjectURL']);
-
-            } else if ($file === false) {
-                // Delete file
-                $original = $model->getOriginal($field);
-                $this->deleteObjects([$original]);
-                $model->setAttribute($field, null);
-            }
+            $this->processField($model, $field);
         }
+    }
+
+    /**
+     * @param $model Model
+     * @param $field String
+     * @return bool
+     */
+    protected function processField($model, $field)
+    {
+        $file = $model->getAttribute($field);
+        $original = $model->getOriginal($field);
+
+        if (is_null($file)) {
+            return true;
+        }
+
+        if ($file === false) {
+            // Delete file
+            $this->deleteObject($original);
+            $model->setAttribute($field, null);
+
+        } else if ($this->checkTempFile($file)) {
+            // Rename temp url to regular url
+            $regularUrl = $this->tempToFormal($model, $field);
+            $model->setAttribute($field, $regularUrl);
+
+        } else {
+            // Update field
+            $url = $this->updateField($model, $field);
+            $model->setAttribute($field, $url);
+        }
+
+        return true;
+    }
+
+    /**
+     * @param $model Model
+     * @param $field string
+     * @return string
+     */
+    protected function updateField($model, $field)
+    {
+        $file = $model->getAttribute($field);
+        if (!($file instanceof UploadedFile)) {
+            return $file;
+        }
+        $key = $this->getTargetKey($model, $field);
+        $original = $model->getOriginal($field);
+        if ($original && $original != $key) {
+            $this->deleteObject($original);
+        }
+        $resource = $this->client->putObject([
+            'Key' => $key,
+            'SourceFile' => $file->getRealPath(),
+            'ACL' => $this->getAcl(),
+            'ContentType' => $file->getMimeType(),
+            'Bucket' => $this->settings['bucket'],
+        ]);
+        return $resource['ObjectURL'];
+    }
+
+    /**
+     * @param $model Model
+     * @param $field string
+     * @return string
+     */
+    protected function tempToFormal($model, $field)
+    {
+        $file = $model->getAttribute($field);
+        $tempKey = $this->keyFromUrl($file);
+        $formalKey = $this->renameToFormal($tempKey, $model->getKey());
+        return $this->moveObject($file, $formalKey);
     }
 
     /**
@@ -91,6 +131,11 @@ class Handler
         if (!empty($urls)) {
             $this->deleteObjects($urls);
         }
+    }
+
+    protected function deleteObject($url)
+    {
+        $this->deleteObjects([$url]);
     }
 
     /**
@@ -112,28 +157,23 @@ class Handler
 
     /**
      * Move object on S3
-     * @param $fromKey
-     * @param $toKey
+     * @param $source string url of s3 object
+     * @param $key string target key
      * @return String new url
      */
-    protected function moveObject($fromKey, $toKey)
+    protected function moveObject($source, $key)
     {
         $bucket = $this->settings['bucket'];
         $object = [
             'Bucket' => $bucket,
-            'Key' => $toKey,
-            'CopySource' => $fromKey,
+            'Key' => $key,
+            'CopySource' => $source,
             'ACL' => $this->getAcl(),
         ];
         $this->client->copyObject($object);
-        $url = $this->client->getObjectUrl($bucket, $toKey);
-        $this->deleteObjects([$fromKey]);
+        $url = $this->client->getObjectUrl($bucket, $key);
+        $this->deleteObjects($source);
         return $url;
-    }
-
-    public function putObject()
-    {
-
     }
 
     /**
@@ -179,23 +219,31 @@ class Handler
     }
 
     /**
+     * Get formal name
+     */
+
+
+    /**
      * Get url if a model has no key.
      * @param $model Model
      * @return String random name
      */
-    public function getTempName($model)
+    public function getTempName($model = null)
     {
         return 'tmp_' . str_random(20);
     }
 
     /**
-     * Check if a url is temp name.
-     * @param $url
+     * Check if a file is temporary file.
+     * @param $file
      * @return bool
      */
-    public function checkTempName($url)
+    public function checkTempFile($file)
     {
-        $path = parse_url($url, PHP_URL_PATH);
+        if (!is_string($file)) {
+            return false;
+        }
+        $path = parse_url($file, PHP_URL_PATH);
         $slugs = explode('/', $path);
         return starts_with(array_pop($slugs), 'tmp_');
     }
@@ -216,11 +264,16 @@ class Handler
         return $key;
     }
 
-    public function replaceBasename($target, $replace)
+    /**
+     * @param $target string
+     * @param $primaryKey integer|string
+     * @return string
+     */
+    public function renameToFormal($target, $primaryKey)
     {
         $dir = dirname($target);
         $basename = basename($target);
-        return $dir . '/' . preg_replace('/^[^\.]*/', $replace, $basename);
+        return $dir . '/' . preg_replace('/^[^\.]*/', $primaryKey, $basename);
     }
 
     public function getAcl()
