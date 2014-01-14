@@ -2,10 +2,10 @@
 
 use Mockery as m;
 
-class HandlerTest extends \PHPUnit_Framework_TestCase
+class ObserverTest extends \PHPUnit_Framework_TestCase
 {
 
-    protected $name = 'Translucent\S3Observer\Handler';
+    protected $name = 'Translucent\S3Observer\Observer';
 
     public function tearDown()
     {
@@ -13,48 +13,78 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         parent::tearDown();
     }
 
-    public function testProcessFieldMethodIsCalledOnProperTimes()
+    public function testConfig()
+    {
+        list($client) = $this->getMocks();
+        $globalConfig = [
+            'bucket' => 'translucent',
+            'base' => null,
+            'public' => true,
+        ];
+        $userModelConfig = [
+            'bucket' => 'user-bucket'
+        ];
+        $itemModelConfig = [
+            'base' => 'item'
+        ];
+        $observer = new Observer($client, $globalConfig);
+        $observer->setUp('User', $userModelConfig);
+
+        $observer->config('profile.public', false);
+        $result = $observer->fieldConfig('profile');
+        $this->assertEquals('user-bucket', $result['bucket']);
+        $this->assertNull($result['base']);
+        $this->assertFalse($result['public']);
+
+        $observer->setUp('Item', $itemModelConfig);
+        $result = $observer->fieldConfig('image');
+        $this->assertEquals('item', $result['base']);
+    }
+
+    public function testAllFieldsAreChecked()
     {
         list($client, $model) = $this->getMocks();
-        $handler = $this->getMock($this->name, ['processField'], ['User', $client]);
-        $handler->expects($this->exactly(2))->method('processField');
-        $handler->setFields('profile', 'cover_image');
-        $handler->saving($model);
+        $observer = $this->getMock($this->name, ['processField', 'getFields'], [$client]);
+        $observer->expects($this->exactly(3))->method('processField');
+        $observer->expects($this->once())->method('getFields')->will($this->returnValue(['profile', 'cover_image', 'icon']));
+
+        $observer->saving($model);
     }
 
     public function testGetTargetDir()
     {
         list($client) = $this->getMocks();
 
-        $handler = new Handler('User', $client);
-        $this->assertEquals('/user/profile/', $handler->getTargetDir('profile'));
+        $observer = new Observer($client);
+        $observer->setUp('User');
+        $this->assertEquals('/user/profile/', $observer->getTargetDir('profile'));
 
-        $handler = new Handler('Translucent/S3Observer/TestModel', $client);
+        $observer->setUp('Translucent/S3Observer/TestModel');
         $this->assertEquals(
             '/translucent/s3_observer/test_model/cover_image/',
-            $handler->getTargetDir('cover_image'));
+            $observer->getTargetDir('cover_image'));
 
-        $handler = new Handler('Translucent\S3Observer\TestModel', $client);
         $this->assertEquals(
             '/translucent/s3_observer/test_model/cover_image/',
-            $handler->getTargetDir('coverImage'));
+            $observer->getTargetDir('coverImage'));
 
-        $handler = new Handler('User', $client);
+        $observer->setUp('User');
         $this->assertEquals(
             '/hello/user/profile/',
-            $handler->getTargetDir('profile', 'hello'));
+            $observer->getTargetDir('profile', 'hello'));
     }
 
     public function testGetS3KeyFromObjectURL()
     {
         list($client) = $this->getMocks();
-        $handler = new Handler('User', $client);
+        $observer = new Observer($client);
+        $observer->setUp('User');
 
         $this->assertEquals('user/profile/1.jpg',
-            $handler->keyFromUrl('https://s3-ap-northeast-1.amazonaws.com/user/profile/1.jpg'));
+            $observer->keyFromUrl('https://s3-ap-northeast-1.amazonaws.com/user/profile/1.jpg'));
 
         $this->assertEquals('user/profile/1.jpg',
-            $handler->keyFromUrl('/user/profile/1.jpg'));
+            $observer->keyFromUrl('/user/profile/1.jpg'));
     }
 
     public function testArgsAreProperlyPassedToDeleteObjectsMethod()
@@ -68,15 +98,15 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
                 }
                 return $args['Objects'] == [['Key' => 'foo'], ['Key' => 'bar']];
             }));
-        $handler = m::mock($this->name . '[keyFromUrl]', ['User', $client]);
-        $handler->shouldReceive('keyFromUrl')->twice()
+        $observer = m::mock($this->name . '[keyFromUrl]', [$client]);
+        $observer->shouldReceive('keyFromUrl')->twice()
             ->andReturn('foo', 'bar');
 
         // Invoke by reflection
-        $ref = new \ReflectionClass($handler);
+        $ref = new \ReflectionClass($observer);
         $method = $ref->getMethod('deleteObjects');
         $method->setAccessible(true);
-        $method->invoke($handler, ['foo_url', 'bar_url'], 'translucent');
+        $method->invoke($observer, ['foo_url', 'bar_url'], 'translucent');
     }
 
     public function testDeleting()
@@ -84,17 +114,17 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
         list($client, $model) = $this->getMocks();
         $model->shouldReceive('getAttribute')->twice()->andReturn('foo', 'bar');
 
-        $handler = $this->getMock($this->name, ['deleteObjects'], ['User', $client]);
-        $handler->setFields('foo_field', 'bar_field');
-        $handler->expects($this->once())->method('deleteObjects')->with(['foo', 'bar']);
-        $handler->deleting($model);
+        $observer = $this->getMock($this->name, ['deleteObjects'], [$client]);
+        $observer->setUp($model, ['bucket' => 'test']);
+        $observer->setFields('foo_field', 'bar_field');
+        $observer->expects($this->once())->method('deleteObjects')->with(['foo', 'bar']);
+        $observer->deleting($model);
     }
 
     public function testGetAcl()
     {
         list($client) = $this->getMocks();
-        $class = $this->name;
-        $handler = new $class('User', $client);
+        $handler = new Observer($client);
 
         $settings = ['public' => true, 'acl' => null];
         $this->assertEquals('public-read', $handler->getAcl($settings));
@@ -110,8 +140,7 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
     public function testRenameToFormal()
     {
         list($client) = $this->getMocks();
-        $class = $this->name;
-        $handler = new $class('User', $client);
+        $handler = new Observer($client);
 
         $this->assertEquals('user/profile/1.jpg',
             $handler->renameToFormal('user/profile/tmp_abcdef.jpg', 1));
@@ -120,8 +149,7 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
     public function testGetTempName()
     {
         list($client) = $this->getMocks();
-        $class = $this->name;
-        $handler = new $class('User', $client);
+        $handler = new Observer($client);
 
         $this->assertStringStartsWith('tmp_', $handler->getTempName());
     }
@@ -129,29 +157,11 @@ class HandlerTest extends \PHPUnit_Framework_TestCase
     public function testCheckTempFile()
     {
         list($client) = $this->getMocks();
-        $class = $this->name;
-        $handler = new $class('User', $client);
+        $handler = new Observer($client);
 
         $this->assertTrue($handler->checkTempFile('user/profile/tmp_abcdef.jpg'));
         $this->assertFalse($handler->checkTempFile('user/profile/1.jpg'));
         $this->assertFalse($handler->checkTempFile(null));
-    }
-
-    public function testCascadingConfig()
-    {
-        list($client) = $this->getMocks();
-        $class = $this->name;
-        $handler = new $class('User', $client);
-
-        $ref = new \ReflectionClass($handler);
-        $method = $ref->getMethod('fieldSettings');
-        $method->setAccessible(true);
-
-        $handler->config('bucket', 'global_bucket');
-        $handler->config('fields.profile.bucket', 'profile_bucket');
-        $handler->config('fields.cover_image.bucket', null);
-        $this->assertEquals('profile_bucket', $method->invoke($handler, 'profile', 'bucket'));
-        $this->assertEquals('global_bucket', $method->invoke($handler, 'cover_image', 'bucket'));
     }
 
     protected function getMocks()

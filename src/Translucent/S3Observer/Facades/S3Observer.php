@@ -7,7 +7,7 @@ class S3Observer extends Facade
 
     protected static function getFacadeAccessor()
     {
-        return 's3-observer.factory';
+        return 's3-observer';
     }
 
 }
