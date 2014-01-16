@@ -23,12 +23,16 @@ class S3ObserverServiceProvider extends ServiceProvider {
 	 */
 	public function register()
 	{
+        $this->app->bindShared('s3-observer.image', function($app)
+        {
+            return new ImageProcessor();
+        });
 
         $this->app->bindShared('s3-observer', function($app)
         {
             $aws = $app['aws'];
             $config = $app['config']['s3-observer::config'];
-            return new Observer($aws->get('s3'), $config);
+            return new Observer($aws->get('s3'), $app['s3-observer.image'], $config);
         });
         $this->app->alias('s3-observer', 'Translucent\S3Observer\Observer');
 

@@ -1,5 +1,6 @@
 <?php namespace Translucent\S3Observer;
 
+use Translucent\S3Observer\ImageProcessor;
 use Illuminate\Database\Eloquent\Model;
 use Aws\S3\S3Client as Client;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -20,12 +21,19 @@ class Observer
     protected $client;
 
     /**
+     * @var ImageProcessor
+     */
+    protected $imageProcessor;
+
+    /**
      * @param Client $client
+     * @param ImageProcessor $processor
      * @param array $config
      */
-    public function __construct(Client $client, $config = [])
+    public function __construct(Client $client, ImageProcessor $processor, $config = [])
     {
         $this->client = $client;
+        $this->imageProcessor = $processor;
         $this->globalConfig = $config;
     }
 
@@ -176,6 +184,12 @@ class Observer
             return $file;
         }
         $config = $this->fieldConfig($field);
+        // Resize process
+        $url = $file->getRealPath();
+        if (isset($config['image'])) {
+            $url = $this->imageProcessor->process($file->getRealPath(), $config['image']);
+        }
+
         $key = $this->getTargetKey($model, $field, $config);
         $original = $model->getOriginal($field);
         if ($original && $original != $key) {
@@ -183,7 +197,7 @@ class Observer
         }
         $resource = $this->client->putObject([
             'Key' => $key,
-            'SourceFile' => $file->getRealPath(),
+            'SourceFile' => $url,
             'ACL' => $this->getAcl($config),
             'ContentType' => $file->getMimeType(),
             'Bucket' => $config['bucket'],
