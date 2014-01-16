@@ -144,7 +144,7 @@ class Observer
             return true;
         }
 
-        if ($file === false) {
+        if ($file === false && $original) {
             // Delete file
             $config = $this->fieldConfig($field);
             $this->deleteObject($original, $config['bucket']);
