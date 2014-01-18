@@ -15,7 +15,7 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testConfig()
     {
-        list($client) = $this->getMocks();
+        list($client, $image) = $this->getMocks();
         $globalConfig = [
             'bucket' => 'translucent',
             'base' => null,
@@ -27,7 +27,7 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
         $itemModelConfig = [
             'base' => 'item'
         ];
-        $observer = new Observer($client, $globalConfig);
+        $observer = new Observer($client, $image, $globalConfig);
         $observer->setUp('User', $userModelConfig);
 
         $observer->config('profile.public', false);
@@ -43,8 +43,8 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testAllFieldsAreChecked()
     {
-        list($client, $model) = $this->getMocks();
-        $observer = $this->getMock($this->name, ['processField', 'getFields'], [$client]);
+        list($client, $image, $model) = $this->getMocks();
+        $observer = $this->getMock($this->name, ['processField', 'getFields'], [$client, $image]);
         $observer->expects($this->exactly(3))->method('processField');
         $observer->expects($this->once())->method('getFields')->will($this->returnValue(['profile', 'cover_image', 'icon']));
 
@@ -53,9 +53,9 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testGetTargetDir()
     {
-        list($client) = $this->getMocks();
+        list($client, $image) = $this->getMocks();
 
-        $observer = new Observer($client);
+        $observer = new Observer($client, $image);
         $observer->setUp('User');
         $this->assertEquals('/user/profile/', $observer->getTargetDir('profile'));
 
@@ -76,8 +76,8 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testGetS3KeyFromObjectURL()
     {
-        list($client) = $this->getMocks();
-        $observer = new Observer($client);
+        list($client, $image) = $this->getMocks();
+        $observer = new Observer($client, $image);
         $observer->setUp('User');
 
         $this->assertEquals('user/profile/1.jpg',
@@ -89,7 +89,7 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testArgsAreProperlyPassedToDeleteObjectsMethod()
     {
-        list($client) = $this->getMocks();
+        list($client, $image) = $this->getMocks();
         $client->shouldReceive('deleteObjects')->once()
             ->with(m::on(function($args)
             {
@@ -98,7 +98,7 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
                 }
                 return $args['Objects'] == [['Key' => 'foo'], ['Key' => 'bar']];
             }));
-        $observer = m::mock($this->name . '[keyFromUrl]', [$client]);
+        $observer = m::mock($this->name . '[keyFromUrl]', [$client, $image]);
         $observer->shouldReceive('keyFromUrl')->twice()
             ->andReturn('foo', 'bar');
 
@@ -111,10 +111,10 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testDeleting()
     {
-        list($client, $model) = $this->getMocks();
+        list($client, $image, $model) = $this->getMocks();
         $model->shouldReceive('getAttribute')->twice()->andReturn('foo', 'bar');
 
-        $observer = $this->getMock($this->name, ['deleteObjects'], [$client]);
+        $observer = $this->getMock($this->name, ['deleteObjects'], [$client, $image]);
         $observer->setUp($model, ['bucket' => 'test']);
         $observer->setFields('foo_field', 'bar_field');
         $observer->expects($this->once())->method('deleteObjects')->with(['foo', 'bar']);
@@ -123,8 +123,8 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testGetAcl()
     {
-        list($client) = $this->getMocks();
-        $handler = new Observer($client);
+        list($client, $image) = $this->getMocks();
+        $handler = new Observer($client, $image);
 
         $settings = ['public' => true, 'acl' => null];
         $this->assertEquals('public-read', $handler->getAcl($settings));
@@ -139,8 +139,8 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testRenameToFormal()
     {
-        list($client) = $this->getMocks();
-        $handler = new Observer($client);
+        list($client, $image) = $this->getMocks();
+        $handler = new Observer($client, $image);
 
         $this->assertEquals('user/profile/1.jpg',
             $handler->renameToFormal('user/profile/tmp_abcdef.jpg', 1));
@@ -148,16 +148,16 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
 
     public function testGetTempName()
     {
-        list($client) = $this->getMocks();
-        $handler = new Observer($client);
+        list($client, $image) = $this->getMocks();
+        $handler = new Observer($client, $image);
 
         $this->assertStringStartsWith('tmp_', $handler->getTempName());
     }
 
     public function testCheckTempFile()
     {
-        list($client) = $this->getMocks();
-        $handler = new Observer($client);
+        list($client, $image) = $this->getMocks();
+        $handler = new Observer($client, $image);
 
         $this->assertTrue($handler->checkTempFile('user/profile/tmp_abcdef.jpg'));
         $this->assertFalse($handler->checkTempFile('user/profile/1.jpg'));
@@ -168,7 +168,8 @@ class ObserverTest extends \PHPUnit_Framework_TestCase
     {
         return [
             m::mock('Aws\S3\S3Client'),
-            m::mock('Illuminate\Database\Eloquent\Model')
+            m::mock('Translucent\S3Observer\ImageProcessor'),
+            m::mock('Illuminate\Database\Eloquent\Model'),
         ];
     }
 
