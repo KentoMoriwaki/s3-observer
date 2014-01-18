@@ -19,7 +19,7 @@ class ImageProcessor
         return $image->dirname . '/' . $image->basename;
     }
 
-    protected function copyToTemp($src)
+    public function copyToTemp($src)
     {
         $tmpFile = tempnam(null, null);
         copy($src, $tmpFile);
@@ -31,7 +31,7 @@ class ImageProcessor
      * @param array $config
      * @return Image processed
      */
-    protected function resize($image, $config)
+    public function resize($image, $config)
     {
         $defaults = [
             'width' => null,
@@ -39,9 +39,7 @@ class ImageProcessor
             'callback' => function ($image) {}
         ];
         $config = $config + $defaults;
-        if (empty($config['width']) || empty($config['height'])) {
-
-            $image->resize($config['width'], $config['height'], true);
+        if (empty($config['width']) && empty($config['height'])) {
 
         } else if ($config['width'] && $config['height']) {
 
@@ -55,6 +53,9 @@ class ImageProcessor
                 $image->resize($config['width'], $config['height'], true);
             }
 
+        } else {
+
+            $image->resize($config['width'], $config['height'], true);
         }
 
         $callback = $config['callback'];
