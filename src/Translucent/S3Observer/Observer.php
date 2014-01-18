@@ -152,7 +152,7 @@ class Observer
             return true;
         }
 
-        if ($file === false && $original) {
+        if (empty($file) && $original) {
             // Delete file
             $config = $this->fieldConfig($field);
             $this->deleteObject($original, $config['bucket']);
