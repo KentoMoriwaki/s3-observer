@@ -111,4 +111,4 @@ public function postEdit($id)
 
 ## More information
 
-To see more information, please check Wiki!
+To see more information, please check [Wiki](https://github.com/KentoMoriwaki/s3-observer/wiki)!
