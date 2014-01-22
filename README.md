@@ -62,7 +62,7 @@ Add S3Observer provider and facade(optional) to app/config/app.php
 ),
 'aliases' => array(
     // ...
-    'Translucent\S3Observer\Facades\S3Observer',
+    'S3Observer' => 'Translucent\S3Observer\Facades\S3Observer',
 )
 ```
 
@@ -89,7 +89,7 @@ protected static function boot()
 }
 ```
 
-And your controller
+And in your controller...
 
 ```php
 public function postEdit($id)
