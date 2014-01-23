@@ -112,3 +112,9 @@ public function postEdit($id)
 ## More information
 
 To see more information, please check [Wiki](https://github.com/KentoMoriwaki/s3-observer/wiki)!
+
+## License
+
+Under the MIT license.
+
+&copy; Kento Moriwaki 2014.
